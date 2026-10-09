@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Spark
+.spark_jars/
+spark-warehouse/
+derby.log
+metastore_db/
+
+# AWS session creds
+aws-session.env
+
+# Logs / local state
+*.log
+scripts/logs/
+
+# IDE / OS
+.idea/
+.vscode/
+*.DS_Store

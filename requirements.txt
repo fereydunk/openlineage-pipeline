@@ -1,0 +1,12 @@
+# End consumer: Apache Spark (OSS) reading the Tableflow Iceberg table.
+pyspark==4.1.1
+# Iceberg Spark runtime + AWS bundle JARs are downloaded by run_spark.sh (not pip).
+
+# AWS / Tableflow provisioning
+boto3==1.38.0
+requests==2.32.3
+pyyaml==6.0.2
+
+# Optional lightweight no-JVM sanity read of the Iceberg table (alternative to Spark)
+pyiceberg[glue,s3]==0.11.1
+pyarrow==23.0.1

@@ -1,0 +1,23 @@
+{
+  "name": "db2-orders-source",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "tasks.max": "1",
+
+    "connection.url": "jdbc:db2://db2:50000/${DB2_DATABASE}",
+    "connection.user": "${DB2_USER}",
+    "connection.password": "${DB2_PASSWORD}",
+
+    "mode": "incrementing",
+    "incrementing.column.name": "ID",
+    "table.whitelist": "${DB2_TABLE}",
+    "schema.pattern": "DB2INST1",
+    "numeric.mapping": "best_fit",
+    "poll.interval.ms": "2000",
+
+    "transforms": "route",
+    "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.route.regex": ".*",
+    "transforms.route.replacement": "${DB2_TOPIC}"
+  }
+}
