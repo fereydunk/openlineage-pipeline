@@ -26,7 +26,7 @@ services:
       - ./db2/init.sql:/tmp/init.sql:ro
     healthcheck:
       # Db2 is ready once the database is active and a trivial query succeeds.
-      test: ["CMD-SHELL", "su - ${DB2_USER:-db2inst1} -c 'db2 connect to ${DB2_DATABASE:-TESTDB} >/dev/null 2>&1 && db2 \"values 1\" >/dev/null 2>&1'"]
+      test: ["CMD-SHELL", "su - ${DB2_USER:-db2inst1} -c '. ~/sqllib/db2profile; db2 connect to ${DB2_DATABASE:-TESTDB} >/dev/null 2>&1 && db2 \"values 1\" >/dev/null 2>&1'"]
       interval: 20s
       timeout: 10s
       retries: 30

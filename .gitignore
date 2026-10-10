@@ -24,3 +24,9 @@ scripts/logs/
 .idea/
 .vscode/
 *.DS_Store
+
+# CC session key (gitignored)
+cc-session.env
+
+# generated typed-label lineage graph (regenerate: make lineage-view)
+lineage/graph.html

@@ -28,7 +28,17 @@ dl "${MAVEN}/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_VERSION}/iceberg-aw
 JOB="${1:-${SCRIPT_DIR}/reader/spark_read.py}"; shift 2>/dev/null || true
 echo "[run_spark] job: ${JOB}  (Glue catalog + S3)"
 
-spark-submit \
+# Prefer the venv's spark-submit (installed with the pyspark pip package); fall
+# back to one on PATH. Pin the driver/worker python to the same interpreter.
+if [ -x "${SCRIPT_DIR}/.venv/bin/spark-submit" ]; then
+  SPARK_SUBMIT="${SCRIPT_DIR}/.venv/bin/spark-submit"
+  export PYSPARK_PYTHON="${SCRIPT_DIR}/.venv/bin/python"
+  export PYSPARK_DRIVER_PYTHON="${SCRIPT_DIR}/.venv/bin/python"
+else
+  SPARK_SUBMIT="spark-submit"
+fi
+
+"${SPARK_SUBMIT}" \
   --master "local[*]" \
   --jars "${ICEBERG_SPARK_JAR},${ICEBERG_AWS_JAR}" \
   --conf "spark.sql.shuffle.partitions=4" \

@@ -7,8 +7,11 @@ DB2_DATABASE ?= TESTDB
 DB2_TOPIC    ?= db2-orders
 ENRICHED_TOPIC ?= orders-enriched
 
+MARQUEZ_FILE := docker-compose.marquez.yml
+
 .PHONY: help venv discover up seed topics connector flink spine aws-setup tableflow \
-        read quick-read produce-more status down clean
+        read quick-read produce-more status down clean \
+        marquez-up marquez-down marquez-wipe lineage lineage-view marquez-ui
 
 help:
 	@echo "Setup:"
@@ -26,6 +29,12 @@ help:
 	@echo "Consume (Spark, the end):"
 	@echo "  make read        — Spark reads the Iceberg table + aggregates"
 	@echo "  make quick-read  — pyiceberg no-JVM sanity read"
+	@echo "Lineage (phase 2 — OpenLineage → Marquez):"
+	@echo "  make marquez-up  — start Marquez (API :5002, UI http://localhost:3000)"
+	@echo "  make lineage     — emit the full DB2→Spark DAG to Marquez"
+	@echo "  make lineage-view— render a typed-label graph (lineage/graph.html) + open it"
+	@echo "  make marquez-ui  — patched Marquez UI on :3000 with typed node labels (needs node)"
+	@echo "  make marquez-down / marquez-wipe — stop / stop+delete Marquez data"
 	@echo "Ops:  make produce-more | make status | make down | make clean"
 
 venv:
@@ -42,7 +51,7 @@ seed:
 	@echo "→ waiting for DB2 to be healthy ..."
 	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' olpipe-db2 2>/dev/null)" = "healthy" ]; do sleep 5; printf '.'; done; echo
 	@echo "→ seeding ORDERS ..."
-	docker exec olpipe-db2 bash -lc "su - $(DB2_USER) -c 'db2 connect to $(DB2_DATABASE) && db2 -tvf /tmp/init.sql'"
+	docker exec -u $(DB2_USER) olpipe-db2 bash -lc '. ~/sqllib/db2profile; db2 connect to $(DB2_DATABASE); db2 -tvf /tmp/init.sql'
 	@echo "✓ seeded"
 
 topics:
@@ -69,15 +78,43 @@ read:
 quick-read:
 	.venv/bin/python reader/quick_read.py
 
-# insert a fresh batch into DB2 so the JDBC connector produces more rows (helps trigger a Tableflow S3 flush)
+# insert a fresh batch into DB2 so the JDBC connector produces more rows (helps trigger a Tableflow S3 flush).
+# IDENTITY assigns new IDs, so mode=incrementing picks them up regardless of duplicate ORDER_IDs.
 produce-more:
-	docker exec olpipe-db2 bash -lc "su - $(DB2_USER) -c 'db2 connect to $(DB2_DATABASE) && db2 \"insert into ORDERS (ORDER_ID,CUSTOMER,ITEM,QUANTITY,AMOUNT_USD) select ORDER_ID||'\''-r'\'', CUSTOMER, ITEM, QUANTITY, AMOUNT_USD from ORDERS\"'"
-	@echo "✓ doubled the ORDERS rows"
+	docker exec -u $(DB2_USER) olpipe-db2 bash -lc '. ~/sqllib/db2profile; db2 connect to $(DB2_DATABASE); db2 "insert into ORDERS (ORDER_ID,CUSTOMER,ITEM,QUANTITY,AMOUNT_USD) select ORDER_ID,CUSTOMER,ITEM,QUANTITY,AMOUNT_USD from ORDERS where ID <= 10"'
+	@echo "✓ added 10 more orders"
 
 status:
 	@echo "== connectors =="; curl -s $(CONNECT_REST)/connectors/db2-orders-source/status 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "(connect worker not reachable)"
 	@echo "== flink =="; confluent flink statement list --environment $(ENV_ID) --cloud $(CLOUD_PROVIDER) --region $(CLOUD_REGION) 2>/dev/null | grep -i olpipe || true
 	@echo "== tableflow =="; confluent tableflow topic list --environment $(ENV_ID) --cluster $(CLUSTER_ID) 2>/dev/null || true
+
+# ── phase 2: OpenLineage → Marquez ────────────────────────────────────────────
+marquez-up:
+	docker compose -f $(MARQUEZ_FILE) up -d
+	@echo "→ waiting for Marquez API on :5002 ..."
+	@until curl -sf -o /dev/null http://localhost:5002/api/v1/namespaces; do sleep 2; printf '.'; done; echo
+	@echo "✓ Marquez ready — API http://localhost:5002  |  UI http://localhost:3000"
+
+lineage:
+	.venv/bin/python lineage/emit_to_marquez.py
+
+# typed-label graph (CONNECT / TOPIC / FLINK / TABLEFLOW / ICEBERG / SPARK pills) —
+# the no-Node stand-in for the forked marquez-web UI. Stock Marquez UI = :3000.
+lineage-view:
+	.venv/bin/python lineage/render_graph.py
+	-open lineage/graph.html
+
+# patched Marquez web UI on :3000 — typed node labels (Kafka Topic / Flink / …)
+# instead of the stock generic JOB/DATASET. Long-running; Ctrl-C to stop.
+marquez-ui:
+	bash scripts/marquez_ui_patched.sh
+
+marquez-down:
+	docker compose -f $(MARQUEZ_FILE) down
+
+marquez-wipe:
+	docker compose -f $(MARQUEZ_FILE) down -v
 
 down:
 	docker compose down

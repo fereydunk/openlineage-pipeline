@@ -1,0 +1,646 @@
+<title>OpenLineage Pipeline Notes</title>
+<meta name="description" content="Field notes for running the DB2 to Spark pipeline: the gotchas, the fixes, and the order to hit them in.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #EBEFF3;
+    --ink: #161B22;
+    --ink-2: #48525E;
+    --ink-3: #727D89;
+    --border: #DCE2E8;
+    --border-strong: #C4CDD6;
+    --accent: #0E7490;
+    --accent-ink: #0B5A70;
+    --accent-soft: #E0F0F4;
+    --crit: #B22A22;      --crit-bg: #FBE9E7;
+    --warn: #9A5B08;      --warn-bg: #FBEEDD;
+    --good: #16733C;      --good-bg: #E3F3E8;
+    --info: #3A5BB8;      --info-bg: #E7ECFA;
+    --shadow: 0 1px 2px rgba(20,27,34,.05), 0 6px 20px rgba(20,27,34,.05);
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0D1117;
+      --surface: #151B23;
+      --surface-2: #1B232D;
+      --ink: #E7ECF1;
+      --ink-2: #A6B1BD;
+      --ink-3: #78828E;
+      --border: #27303B;
+      --border-strong: #38424E;
+      --accent: #38B6CE;
+      --accent-ink: #5FCADD;
+      --accent-soft: #112A33;
+      --crit: #E8817A;     --crit-bg: #2C1715;
+      --warn: #E0A64F;     --warn-bg: #2A1F0F;
+      --good: #5FBE83;     --good-bg: #132619;
+      --info: #8AA3E6;     --info-bg: #161C2E;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0D1117;
+    --surface: #151B23;
+    --surface-2: #1B232D;
+    --ink: #E7ECF1;
+    --ink-2: #A6B1BD;
+    --ink-3: #78828E;
+    --border: #27303B;
+    --border-strong: #38424E;
+    --accent: #38B6CE;
+    --accent-ink: #5FCADD;
+    --accent-soft: #112A33;
+    --crit: #E8817A;     --crit-bg: #2C1715;
+    --warn: #E0A64F;     --warn-bg: #2A1F0F;
+    --good: #5FBE83;     --good-bg: #132619;
+    --info: #8AA3E6;     --info-bg: #161C2E;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- header ---- */
+  header.masthead {
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(120% 140% at 85% -10%, var(--accent-soft) 0%, transparent 55%),
+      var(--surface);
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+    margin: 0 0 16px;
+  }
+  .lede {
+    font-size: 18px;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .masthead .wrap { padding-top: 54px; padding-bottom: 46px; }
+  .chain {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin-top: 26px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .chain b { color: var(--accent-ink); font-weight: 600; }
+  .chain .arr { color: var(--ink-3); padding: 0 6px; }
+
+  /* ---- section scaffold ---- */
+  section { padding: 44px 0; border-bottom: 1px solid var(--border); }
+  .sec-head { margin: 0 0 24px; }
+  .sec-kicker {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: block;
+    margin-bottom: 8px;
+  }
+  h2 {
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .sec-head p { color: var(--ink-2); margin: 10px 0 0; max-width: 64ch; }
+
+  /* ---- pipeline diagram ---- */
+  .flow-scroll { overflow-x: auto; padding-bottom: 6px; }
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-width: max-content;
+  }
+  .node {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 13px 15px;
+    min-width: 142px;
+    max-width: 158px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .node .stage {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .node .name {
+    font-weight: 600;
+    font-size: 14px;
+    margin: 3px 0 4px;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+  .node .meta { font-size: 11.5px; color: var(--ink-2); line-height: 1.35; }
+  .node.ext { border-style: dashed; background: var(--surface-2); }
+  .node.cc { border-color: var(--accent); }
+  .node.cc .stage { color: var(--accent-ink); }
+  .connector {
+    align-self: center;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    padding: 0 7px;
+    font-size: 16px;
+    flex: 0 0 auto;
+  }
+  .flow-legend {
+    display: flex; flex-wrap: wrap; gap: 18px;
+    margin-top: 18px; font-size: 13px; color: var(--ink-2);
+  }
+  .flow-legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 22px; height: 13px; border-radius: 4px; display: inline-block; }
+  .swatch.cc { border: 1.5px solid var(--accent); background: var(--surface); }
+  .swatch.ext { border: 1.5px dashed var(--border-strong); background: var(--surface-2); }
+  .span-note {
+    margin-top: 18px; padding: 13px 15px;
+    background: var(--info-bg); border: 1px solid var(--border);
+    border-left: 3px solid var(--info); border-radius: 8px;
+    font-size: 14px; color: var(--ink-2);
+  }
+  .span-note b { color: var(--ink); }
+
+  /* ---- ranked gotchas ---- */
+  ol.ranked { list-style: none; counter-reset: g; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  ol.ranked > li {
+    counter-increment: g;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px 18px 64px;
+    position: relative;
+    box-shadow: var(--shadow);
+  }
+  ol.ranked > li::before {
+    content: counter(g, decimal-leading-zero);
+    position: absolute;
+    left: 18px; top: 17px;
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent-ink);
+  }
+  .g-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+  .g-title { font-weight: 600; font-size: 16.5px; }
+  .g-body { color: var(--ink-2); font-size: 14.5px; }
+  .g-body code, .inline-code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 5px;
+    color: var(--ink); white-space: nowrap;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .tag.crit { background: var(--crit-bg); color: var(--crit); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn); }
+  .tag.info { background: var(--info-bg); color: var(--info); }
+  .tag.good { background: var(--good-bg); color: var(--good); }
+
+  /* ---- prereqs ---- */
+  .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .check {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .check .k { font-weight: 600; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+  .check .k::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); flex: 0 0 auto;
+  }
+  .check .v { color: var(--ink-2); font-size: 13.5px; margin-top: 5px; }
+
+  /* ---- more: grouped cards ---- */
+  .groups { display: flex; flex-direction: column; gap: 18px; }
+  .group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .group h3 {
+    margin: 0 0 14px; font-size: 16px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .group h3 .pin {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent-ink);
+    background: var(--accent-soft); padding: 3px 9px; border-radius: 6px;
+  }
+  .group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 11px; }
+  .group li { padding-left: 20px; position: relative; color: var(--ink-2); font-size: 14.5px; }
+  .group li::before {
+    content: "▸"; position: absolute; left: 0; top: 0;
+    color: var(--accent); font-size: 12px;
+  }
+  .group li b { color: var(--ink); font-weight: 600; }
+  .group code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
+
+  /* ---- snippets ---- */
+  .snip { margin: 0 0 18px; }
+  .snip:last-child { margin-bottom: 0; }
+  .snip .cap {
+    font-family: var(--mono); font-size: 12px; color: var(--ink-3);
+    letter-spacing: .04em; margin-bottom: 7px;
+  }
+  pre {
+    margin: 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 15px 17px; overflow-x: auto;
+    font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--ink);
+    box-shadow: var(--shadow);
+  }
+  pre .c { color: var(--ink-3); }
+  pre .hl { color: var(--accent-ink); font-weight: 600; }
+  pre .bad { color: var(--crit); }
+
+  footer { padding: 34px 0 60px; color: var(--ink-3); font-size: 13px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+  footer code { font-family: var(--mono); }
+  a { color: var(--accent-ink); }
+  @media (max-width: 560px) {
+    ol.ranked > li { padding-left: 20px; padding-top: 44px; }
+    ol.ranked > li::before { top: 16px; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">openlineage-pipeline · field notes</p>
+    <h1>Running the DB2&nbsp;→&nbsp;Spark pipeline</h1>
+    <p class="lede">What actually bites when you stand up this pipeline end to end — the blocker that cost
+      the most time, the quiet ones that make working data look broken, and the setup to get right before
+      you start. Ordered so you hit them in roughly the order they hit you.</p>
+    <div class="chain">
+      <b>DB2.ORDERS</b><span class="arr">→</span><b>db2-orders</b><span class="arr">→</span>Flink
+      <span class="arr">→</span><b>orders-enriched</b><span class="arr">→</span>Tableflow
+      <span class="arr">→</span>Iceberg/Glue<span class="arr">→</span><b>Spark</b>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- ARCHITECTURE -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="sec-kicker">The spine</span>
+        <h2>Every hop, and where the lineage GUI can actually see it</h2>
+        <p>Eight stages. Confluent Stream Lineage draws the solid (cloud) nodes natively; the dashed ends
+          live outside Confluent and are exactly what a future OpenLineage phase would stitch on.</p>
+      </div>
+      <div class="flow-scroll">
+        <div class="flow">
+          <div class="node ext">
+            <div class="stage">Source</div>
+            <div class="name">DB2 · ORDERS</div>
+            <div class="meta">IBM community image, Docker</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Connect</div>
+            <div class="name">db2-orders-source</div>
+            <div class="meta">JDBC source, self-managed, <code>incrementing</code> on ID</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Topic</div>
+            <div class="name">db2-orders</div>
+            <div class="meta">Avro + Schema Registry</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Flink SQL</div>
+            <div class="name">olpipe-enrich-orders</div>
+            <div class="meta">CTAS, derives RISK_TIER</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Topic</div>
+            <div class="name">orders-enriched</div>
+            <div class="meta">Flink output</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Tableflow</div>
+            <div class="name">BYOS</div>
+            <div class="meta">Materializes to Iceberg</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node cc">
+            <div class="stage">Table</div>
+            <div class="name">olpipe.orders-enriched</div>
+            <div class="meta">Iceberg on S3 + AWS Glue</div>
+          </div>
+          <div class="connector">→</div>
+          <div class="node ext">
+            <div class="stage">Consumer</div>
+            <div class="name">Spark (OSS)</div>
+            <div class="meta">Reads Glue/S3 directly</div>
+          </div>
+        </div>
+      </div>
+      <div class="flow-legend">
+        <span><i class="swatch cc"></i> In Confluent Stream Lineage</span>
+        <span><i class="swatch ext"></i> External to Confluent (DB2, Spark)</span>
+      </div>
+      <div class="span-note">
+        The GUI span is <b>db2-orders → olpipe-enrich-orders → orders-enriched → Tableflow</b>, with the
+        self-managed connector shown as a <b>producer client</b> rather than a managed-connector tile.
+        Open it at <span class="inline-code">confluent.cloud/environments/env-m2qxq/clusters/lkc-w71g5v5/stream-lineage</span>
+        within ~10&nbsp;min of pushing data — it renders a rolling activity window.
+      </div>
+    </div>
+  </section>
+
+  <!-- PREREQS -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="sec-kicker">Before you start</span>
+        <h2>Five things in place, or the run stalls on step one</h2>
+      </div>
+      <div class="checks">
+        <div class="check">
+          <div class="k">AWS credentials</div>
+          <div class="v">Account <code>586051073099</code> — S3, Glue, IAM. Temporary STS tokens (they expire).</div>
+        </div>
+        <div class="check">
+          <div class="k">Confluent Cloud key</div>
+          <div class="v">A <b>resource-management</b> API key — distinct from cluster and Schema Registry keys.</div>
+        </div>
+        <div class="check">
+          <div class="k">confluent login</div>
+          <div class="v">CLI session active; env <code>env-m2qxq</code>, cluster <code>lkc-w71g5v5</code>.</div>
+        </div>
+        <div class="check">
+          <div class="k">Docker daemon</div>
+          <div class="v">colima on macOS: <code>--vm-type vz --vz-rosetta</code> for amd64 emulation.</div>
+        </div>
+        <div class="check">
+          <div class="k">Java 21 + venv</div>
+          <div class="v">For Spark. <code>openjdk@21</code> via Homebrew; a Python venv with <code>pyspark</code>.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOP 10 -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="sec-kicker">Ranked by how likely it is to bite</span>
+        <h2>The top ten</h2>
+        <p>Numbered because they really are a priority order, not a sequence of steps — #1 is where the
+          hours went.</p>
+      </div>
+      <ol class="ranked">
+        <li>
+          <div class="g-head"><span class="g-title">Tableflow BYOS needs <code>sts:TagSession</code></span><span class="tag crit">Blocker</span></div>
+          <div class="g-body">Confluent assumes the role <i>with session tags</i>. The trust policy needs two
+            statements: <code>sts:AssumeRole</code> gated by the <code>sts:ExternalId</code> condition, <b>and</b>
+            <code>sts:TagSession</code> with no condition. Miss the second and it fails with the misleading
+            <i>“Unable to assume the IAM role”</i> — even when the principal and ExternalId match perfectly.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">Have all five prerequisites ready up front</span><span class="tag info">Setup</span></div>
+          <div class="g-body">AWS creds, a Cloud resource-management key, <code>confluent login</code>, a running
+            Docker daemon, and Java 21 + a venv. Missing any one stops the run cold on the stage that needs it.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">AWS creds are temporary and expire</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">They live only in gitignored <code>aws-session.env</code> (cloud key in
+            <code>cc-session.env</code>), never in <code>.env</code> or git. Sudden 403s mid-run usually mean
+            refresh the STS token first.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">Drive DB2 through <code>docker exec -u db2inst1</code> + db2profile</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">Under amd64 emulation DB2 is flaky. Always
+            <code>docker exec -u db2inst1 … bash -lc '. ~/sqllib/db2profile; db2 connect to TESTDB; …'</code>.
+            Never <code>su - db2inst1</code> (loses the instance attachment). The healthcheck is known-broken —
+            “unhealthy” ≠ down.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">The Glue table keeps the hyphen</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">It registers as <code>orders-enriched</code>, not <code>orders_enriched</code>.
+            Spark must back-tick quote it and set <code>glue.skip-name-validation=true</code>. It also carries
+            extra <code>$$topic</code>/<code>$$offset</code> Kafka-metadata columns beside the real ones.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">Only BYOS syncs to an external catalog</span><span class="tag info">Design</span></div>
+          <div class="g-body">Custom storage (BYOS) syncs to Glue; Confluent-managed storage can only use the
+            built-in Iceberg REST Catalog. Querying from open-source Spark is <i>why</i> BYOS + Glue is the right
+            call — don’t switch to managed storage and expect Glue.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">Tableflow has flush latency — give it rows and time</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">The Iceberg table appears only after enough rows accumulate and the first commit
+            fires. Confirm with
+            <code>aws s3 ls s3://&lt;bucket&gt;/ --recursive | grep metadata.json</code> before running Spark; don’t
+            call it broken at t+30s.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">Stale Schema Registry subjects break Flink CTAS</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">A leftover <code>orders-enriched-value</code> subject makes the statement FAIL with
+            <i>“subject doesn’t match existing”</i>. Hard-delete the stale subject, then recreate the statement.
+            Same family: SR <b>401s</b> right after minting keys are just propagation delay — wait.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">The verification tooling itself has traps</span><span class="tag warn">Gotcha</span></div>
+          <div class="g-body">On macOS there’s <b>no <code>timeout</code></b> command (use background + <code>sleep</code>
+            + <code>kill</code>); the consume flag is <code>--schema-registry-endpoint</code>, not
+            <code>--sr-endpoint</code>; and consume reads from <b>latest</b> by default. All three make flowing data
+            look missing.</div>
+        </li>
+        <li>
+          <div class="g-head"><span class="g-title">The two ends of the lineage are external</span><span class="tag good">Expected</span></div>
+          <div class="g-body">DB2 (source) and Spark (consumer) don’t appear in Confluent Stream Lineage — only
+            the middle span does. That’s expected, not a bug; stitching the ends together is the planned
+            OpenLineage phase.</div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- AND MORE -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="sec-kicker">…and more</span>
+        <h2>The rest, grouped by where you’ll meet it</h2>
+      </div>
+      <div class="groups">
+        <div class="group">
+          <h3><span class="pin">Docker · DB2</span></h3>
+          <ul>
+            <li><b>colima for the daemon:</b> <code>colima start --vm-type vz --vz-rosetta --cpu 4 --memory 8</code>. If the VM is stale, <code>colima delete -f</code> then start fresh. (It’s <code>--vm-type vz</code>, not <code>--vz</code>.)</li>
+            <li><b>compose plugin:</b> <code>brew install docker-compose</code> then symlink into <code>~/.docker/cli-plugins/</code> so <code>docker compose</code> resolves.</li>
+            <li><b>Seeding rows:</b> copy SQL into the container and run <code>db2 -tvf /tmp/init.sql</code> after sourcing db2profile — not through a host client.</li>
+            <li><b>Chose JDBC polling over Debezium CDC</b> on purpose — avoids the fiddly DB2 ASN capture setup.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Kafka Connect</span></h3>
+          <ul>
+            <li><b>Self-managed worker → Confluent Cloud</b> over SASL_SSL; the worker’s internal topics must be created on CC with <b>replication factor 3</b>.</li>
+            <li><b>Avro value converter</b> pointed at Schema Registry; the DB2 <code>jcc</code> driver is baked into the Connect image alongside <code>kafka-connect-jdbc</code>.</li>
+            <li><b>Source config:</b> <code>mode=incrementing</code> on <code>ID</code>, <code>schema.pattern=DB2INST1</code>, a <code>RegexRouter</code> SMT to name the topic <code>db2-orders</code>.</li>
+            <li><b>A RUNNING task with an advancing offset</b> is the real proof rows are being produced — check <code>/connectors/db2-orders-source/offsets</code>.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Flink SQL</span></h3>
+          <ul>
+            <li><b>Use CTAS, not <code>INSERT INTO</code></b> an existing table — CTAS creates the target + schema from the projection and sidesteps the implicit <code>key BYTES</code> “different number of columns” error.</li>
+            <li><b><code>--database &lt;CLUSTER_ID&gt;</code> is required</b> for unqualified table names; pair with <code>--wait</code> when scripting.</li>
+            <li><b>Column names arrive UPPERCASE</b> (DB2 columns via the Avro converter) — write SQL accordingly.</li>
+            <li><b>“RUNNING” isn’t proof of flow:</b> a statement can read RUNNING with null latest-offsets. Verify by data landing in the output topic, not by status alone.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Tableflow · AWS</span></h3>
+          <ul>
+            <li><b>Two integrations:</b> a <b>provider integration</b> (<code>cspi-*</code>) returns Confluent’s ARN + ExternalId; a <b>catalog integration</b> (<code>tci-*</code>, <code>kind=AwsGlue</code>) with a custom database points Iceberg metadata at Glue.</li>
+            <li><b>The REST API changed:</b> <code>storage.kind=CustomerManaged</code> is no longer valid. Enable via the CLI: <code>confluent tableflow topic enable … --storage-type BYOS</code>.</li>
+            <li><b><code>record_failure_strategy=SUSPEND</code></b> means a failed assume-role <i>suspends</i> the topic. After fixing the trust policy, <b>disable then re-enable</b> to retry.</li>
+            <li><b>Verify against live docs</b> — Tableflow moves fast; don’t trust patterns from older Tableflow projects.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Spark · Iceberg</span></h3>
+          <ul>
+            <li><b>JARs:</b> <code>iceberg-spark-runtime-4.0_2.13-1.10.1</code> + <code>iceberg-aws-bundle-1.10.1</code>; catalog = <code>GlueCatalog</code>, IO = <code>S3FileIO</code>.</li>
+            <li><b>Auth:</b> <code>EnvironmentVariableCredentialsProvider</code> — so <code>source aws-session.env</code> before submitting.</li>
+            <li><b><code>spark-submit</code> comes from the venv</b> (<code>.venv/bin/spark-submit</code>, installed with the pyspark pip package), not the system PATH.</li>
+            <li><b>No-JVM alternative:</b> <code>pyiceberg</code> (<code>load_catalog(…).load_table().scan()</code>) for a quick sanity read.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Secrets · git · data</span></h3>
+          <ul>
+            <li><b>Secrets hygiene:</b> STS creds in <code>aws-session.env</code>, cloud key in <code>cc-session.env</code> — both gitignored, <code>chmod 600</code>, never in <code>.env</code>.</li>
+            <li><b>Pushing to a personal repo</b> is blocked by Airlock — use <code>git push-external</code>, don’t bypass it.</li>
+            <li><b>Decimal display quirk:</b> the CLI consumer renders Avro decimals as fractions (<code>3278/25</code> = 131.12). It’s a display artifact only — Spark reads proper decimals (<code>2499.75</code>).</li>
+            <li><b>Sanity check the output:</b> RISK_TIER over 320 rows came out HIGH 96 / $479,991.68, MEDIUM 160 / $163,507.20, LOW 64 / $11,198.40.</li>
+          </ul>
+        </div>
+        <div class="group">
+          <h3><span class="pin">Lineage · Marquez (phase 2)</span></h3>
+          <ul>
+            <li><b>macOS AirPlay squats on port 5000:</b> Control Center returns 403 there, shadowing Marquez even though its container is healthy. Map the API to host <code>5002</code>; the UI on <code>:3000</code> reaches it over the Docker network, so it's fine.</li>
+            <li><b>One OpenLineage job per hop</b> (Connect / Flink / Tableflow / Spark); Marquez stitches the DAG purely by matching <code>(namespace, name)</code> on dataset I/O. That's how the four events form one graph — and how you include the DB2 + Spark ends the auto-bridge drops.</li>
+            <li><b>Pin marquez-web to the released tag</b> <code>0.51.1</code> (React 18). <code>main</code> is on React 19 and crashes the UI (<i>"Element type is invalid … Sidenav"</i>).</li>
+            <li><b>The typed labels are a one-line patch:</b> marquez-web hard-codes <code>JOB</code>/<code>DATASET</code> in the node components — swap for a <code>nodeTypeLabel(namespace)</code>. Also set <code>devServer.client.overlay.warnings=false</code> so a harmless warning doesn't blank the page.</li>
+            <li><b>No-Node fallback:</b> <code>make lineage-view</code> renders a typed graph (<code>lineage/graph.html</code>) straight from the Marquez API — handy when you can't build marquez-web.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SNIPPETS -->
+  <section>
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="sec-kicker">Copy-paste</span>
+        <h2>The five that save the most time</h2>
+      </div>
+      <div class="snip">
+        <div class="cap">1 · IAM trust policy — the <span class="inline-code">TagSession</span> statement is the one everyone forgets</div>
+        <pre>{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow",
+      "Principal": { "AWS": "<span class="hl">arn:aws:iam::851725421142:role/cspi-XXXXX</span>" },
+      "Action": "sts:AssumeRole",
+      "Condition": { "StringEquals": { "sts:ExternalId": "<span class="hl">&lt;external-id&gt;</span>" } } },
+    { "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::851725421142:role/cspi-XXXXX" },
+      "Action": "<span class="hl">sts:TagSession</span>" }          <span class="c">&lt;- no condition, and easy to omit</span>
+  ]
+}</pre>
+      </div>
+      <div class="snip">
+        <div class="cap">2 · Spark — back-tick the hyphen, skip name validation</div>
+        <pre><span class="c"># in spark_read.py</span>
+.config("spark.sql.catalog.glue.glue.<span class="hl">skip-name-validation</span>", "true")
+<span class="c"># then</span>
+spark.table("glue.olpipe.<span class="hl">`orders-enriched`</span>")</pre>
+      </div>
+      <div class="snip">
+        <div class="cap">3 · Consume — the flags that actually exist</div>
+        <pre>confluent kafka topic consume orders-enriched <span class="hl">--from-beginning</span> \
+  --value-format avro \
+  <span class="hl">--schema-registry-endpoint</span> "$SR_URL" \      <span class="c"># NOT --sr-endpoint</span>
+  --schema-registry-api-key "$SR_API_KEY" \
+  --schema-registry-api-secret "$SR_API_SECRET"
+<span class="c"># no `timeout` on macOS -> background the consumer, sleep, kill $PID</span></pre>
+      </div>
+      <div class="snip">
+        <div class="cap">4 · DB2 — the only invocation that reliably works</div>
+        <pre>docker exec -u db2inst1 olpipe-db2 bash -lc \
+  '. ~/sqllib/db2profile; db2 connect to TESTDB; db2 -tvf /tmp/init.sql'
+<span class="bad"># NOT: su - db2inst1 -c 'db2 ...'   (loses the instance attachment)</span></pre>
+      </div>
+      <div class="snip">
+        <div class="cap">5 · Marquez → lineage (port 5002, not 5000)</div>
+        <pre>make marquez-up          <span class="c"># Postgres + API :5002 + UI :3000</span>
+make lineage             <span class="c"># emit the full DB2→Spark DAG</span>
+make marquez-ui          <span class="c"># patched UI on :3000, typed labels (pins marquez <span class="hl">0.51.1</span>)</span>
+<span class="c"># API is on :5002 because macOS AirPlay owns :5000. UI graph:</span>
+<span class="c"># http://localhost:3000/lineage/job/flink%3A%2F%2Fenv-m2qxq/olpipe-enrich-orders</span></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>openlineage-pipeline · DB2 → Kafka → Flink → Tableflow → Spark</span>
+    <span><code>env-m2qxq</code> · <code>lkc-w71g5v5</code> · AWS <code>586051073099</code> / us-east-2</span>
+  </div>
+</footer>

@@ -10,9 +10,10 @@ from pyspark.sql import SparkSession
 BUCKET = os.environ["AWS_S3_BUCKET"]
 PREFIX = os.environ.get("ICEBERG_S3_PREFIX", "warehouse")
 GLUE_DB = os.environ.get("AWS_GLUE_DATABASE", "olpipe")
-# Tableflow names the Iceberg table after the topic with '-' -> '_'
-TABLE = os.environ.get("ENRICHED_TOPIC", "orders-enriched").replace("-", "_")
-FQN = f"glue.{GLUE_DB}.{TABLE}"
+# Tableflow registers the Iceberg table under the topic name verbatim (hyphen kept),
+# so the identifier must be back-tick quoted and glue.skip-name-validation=true.
+TABLE = os.environ.get("ENRICHED_TOPIC", "orders-enriched")
+FQN = f"glue.{GLUE_DB}.`{TABLE}`"
 
 
 def main():

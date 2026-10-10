@@ -1,0 +1,66 @@
+# Marquez — OpenLineage metadata server + UI (phase 2 of openlineage-pipeline).
+#   OpenLineage ingest → POST http://localhost:5002/api/v1/lineage
+#   Marquez REST API    → http://localhost:5002/api/v1/...
+#   Web UI              → http://localhost:3000
+#
+# NOTE: host port is 5002, not Marquez's usual 5000 — on macOS, Control Center /
+# AirPlay Receiver (AirTunes) squats on :5000 and returns 403 to the host even
+# though the container is healthy. The UI reaches the API over the Docker network
+# (MARQUEZ_HOST), so it's unaffected by this host-port remap.
+#
+# Run:  docker compose -f docker-compose.marquez.yml up -d
+# Stop: docker compose -f docker-compose.marquez.yml down   (add -v to wipe the DB)
+services:
+
+  marquez-db:
+    image: postgres:14
+    container_name: olpipe-marquez-db
+    environment:
+      POSTGRES_USER:     marquez
+      POSTGRES_PASSWORD: marquez
+      POSTGRES_DB:       marquez
+    volumes:
+      - olpipe-marquez-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "marquez"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  marquez-api:
+    image: marquezproject/marquez:latest
+    container_name: olpipe-marquez-api
+    depends_on:
+      marquez-db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST:      marquez-db
+      POSTGRES_PORT:      5432
+      MARQUEZ_PORT:       5000
+      MARQUEZ_ADMIN_PORT: 5001
+      SEARCH_ENABLED:     "false"
+    ports:
+      - "5002:5000"
+      - "5001:5001"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/v1/namespaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  marquez-web:
+    image: marquezproject/marquez-web:latest
+    container_name: olpipe-marquez-ui
+    depends_on:
+      marquez-api:
+        condition: service_healthy
+    environment:
+      MARQUEZ_HOST: marquez-api
+      MARQUEZ_PORT: 5000
+      WEB_PORT:     3000
+    ports:
+      - "3000:3000"
+
+volumes:
+  olpipe-marquez-db:

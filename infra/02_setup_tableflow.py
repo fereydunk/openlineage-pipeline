@@ -91,12 +91,31 @@ def create_provider_integration(a, env_id, role_arn):
 
 # ── Step 2: IAM trust policy ────────────────────────────────────────────────
 def update_trust_policy(iam, confluent_arn, external_id):
-    trust = {"Version": "2012-10-17", "Statement": [{
-        "Effect": "Allow", "Principal": {"AWS": confluent_arn}, "Action": "sts:AssumeRole",
-        "Condition": {"StringEquals": {"sts:ExternalId": external_id}},
-    }]}
-    iam.update_assume_role_policy(RoleName=IAM_ROLE_NAME, PolicyDocument=json.dumps(trust))
-    print(f"[IAM] trust updated → {confluent_arn} (externalId {external_id})")
+    from botocore.exceptions import ClientError
+    # Confluent assumes the role WITH session tags, so the trust policy needs BOTH
+    # sts:AssumeRole (gated by the ExternalId) and sts:TagSession (no condition).
+    # Omitting TagSession fails with "Unable to assume the IAM role".
+    trust = {"Version": "2012-10-17", "Statement": [
+        {"Effect": "Allow", "Principal": {"AWS": confluent_arn}, "Action": "sts:AssumeRole",
+         "Condition": {"StringEquals": {"sts:ExternalId": external_id}}},
+        {"Effect": "Allow", "Principal": {"AWS": confluent_arn}, "Action": "sts:TagSession"},
+    ]}
+    # AWS may reject the just-created cross-account Confluent role as an "Invalid
+    # principal" until it propagates — retry with backoff.
+    last = None
+    for attempt in range(1, 13):
+        try:
+            iam.update_assume_role_policy(RoleName=IAM_ROLE_NAME, PolicyDocument=json.dumps(trust))
+            print(f"[IAM] trust updated → {confluent_arn} (externalId {external_id})")
+            return
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "MalformedPolicyDocument":
+                last = e
+                print(f"  [IAM] principal not valid yet (attempt {attempt}/12); waiting 10s...")
+                time.sleep(10)
+            else:
+                raise
+    raise SystemExit(f"IAM trust update kept failing: {last}")
 
 
 # ── Step 3: enable Tableflow (customer-managed S3) ──────────────────────────

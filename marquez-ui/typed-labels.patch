@@ -1,0 +1,67 @@
+diff --git a/web/src/routes/table-level/TableLineageDatasetNode.tsx b/web/src/routes/table-level/TableLineageDatasetNode.tsx
+index 6e02f15..d1239c0 100644
+--- a/web/src/routes/table-level/TableLineageDatasetNode.tsx
++++ b/web/src/routes/table-level/TableLineageDatasetNode.tsx
+@@ -7,6 +7,7 @@ import { PositionedNode } from '../../../libs/graph'
+ import { THEME_EXTRA, theme } from '../../helpers/theme'
+ import { TableLineageDatasetNodeData } from './nodes'
+ import { connect } from 'react-redux'
++import { nodeTypeLabel } from './TableLineageJobNode'
+ 
+ import * as Redux from 'redux'
+ import { Divider } from '@mui/material'
+@@ -210,7 +211,7 @@ const TableLineageDatasetNode = ({
+             onClick={handleClick}
+             cursor={'pointer'}
+           >
+-            DATASET
++            {nodeTypeLabel(node.data.dataset.namespace)}
+           </text>
+           <text fontSize='8' fill={'white'} x={28} y={20} cursor={'pointer'} onClick={handleClick}>
+             {truncateText(node.data.dataset.name, 15)}
+diff --git a/web/src/routes/table-level/TableLineageJobNode.tsx b/web/src/routes/table-level/TableLineageJobNode.tsx
+index 7e0f6e0..bf153c6 100644
+--- a/web/src/routes/table-level/TableLineageJobNode.tsx
++++ b/web/src/routes/table-level/TableLineageJobNode.tsx
+@@ -28,6 +28,18 @@ interface TableLineageJobNodeProps {
+ 
+ const ICON_SIZE = 12
+ 
++// Typed label derived from the OpenLineage namespace (replaces the generic "JOB").
++export const nodeTypeLabel = (ns: string): string => {
++  if (ns.startsWith('flink://')) return 'Flink'
++  if (ns.startsWith('kafka-connect://')) return 'Kafka Connect'
++  if (ns.startsWith('tableflow://')) return 'Tableflow'
++  if (ns.startsWith('spark://')) return 'Spark'
++  if (ns.startsWith('kafka://')) return 'Kafka Topic'
++  if (ns.startsWith('glue://')) return 'Iceberg'
++  if (ns.startsWith('db2://')) return 'DB2 Table'
++  return 'Job'
++}
++
+ const TableLineageJobNode = ({ node }: TableLineageJobNodeProps & StateProps) => {
+   const navigate = useNavigate()
+   const { name, namespace } = useParams()
+@@ -149,7 +161,7 @@ const TableLineageJobNode = ({ node }: TableLineageJobNodeProps & StateProps) =>
+             onClick={handleClick}
+             cursor={'pointer'}
+           >
+-            JOB
++            {nodeTypeLabel(node.data.job.namespace)}
+           </text>
+           <text fontSize='8' fill={'white'} x={28} y={20} onClick={handleClick} cursor={'pointer'}>
+             {truncateText(node.data.job.name, 16)}
+diff --git a/web/webpack.dev.js b/web/webpack.dev.js
+index 84449f2..c8af109 100644
+--- a/web/webpack.dev.js
++++ b/web/webpack.dev.js
+@@ -18,6 +18,9 @@ const webpackDev = {
+       watch: true,
+     },
+     port: 1337,
++    client: {
++      overlay: { errors: true, warnings: false },
++    },
+     devMiddleware: {
+       publicPath: '/'
+     },
